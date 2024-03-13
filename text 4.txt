@@ -1,0 +1,120 @@
+import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
+import 'dart:convert';
+import 'package:flutter/services.dart';
+import 'package:web3dart/web3dart.dart';
+import 'package:bip32/bip32.dart' as bip32;
+import 'package:bech32/bech32.dart';
+import 'package:cosmosdart/cosmosdart.dart';
+
+void main() {
+  runApp(MyApp());
+}
+
+class MyApp extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      title: 'Blockchain Balances',
+      theme: ThemeData(
+        primarySwatch: Colors.blue,
+      ),
+      home: MyHomePage(),
+    );
+  }
+}
+
+class MyHomePage extends StatefulWidget {
+  @override
+  _MyHomePageState createState() => _MyHomePageState();
+}
+
+class _MyHomePageState extends State<MyHomePage> {
+  String ethBalance = 'Loading...';
+  String cosmosBalance = 'Loading...';
+
+  @override
+  void initState() {
+    super.initState();
+    fetchBalances();
+  }
+
+  Future<void> fetchBalances() async {
+    // Ethereum
+    final ethAddress = '0xYourEthAddress';
+    final ethRpcUrl = 'https://mainnet.infura.io/v3/your_infura_project_id';
+    final ethResponse = await http.get(Uri.parse('$ethRpcUrl/eth_getBalance?params=[$ethAddress,"latest"]'));
+    final ethData = jsonDecode(ethResponse.body);
+    final ethBalanceInWei = BigInt.parse(ethData['result']);
+    final ethBalanceInEth = EthereumAmount.fromUnitAndValue(EtherUnit.ether, ethBalanceInWei);
+
+    // Cosmos
+    final cosmosAddress = 'cosmos1yourcosmosaddress';
+    final cosmosResponse = await http.get(Uri.parse('https://lcd.terra.dev/bank/balances/$cosmosAddress'));
+    final cosmosData = jsonDecode(cosmosResponse.body);
+    final cosmosBalance = cosmosData.isNotEmpty ? cosmosData[0]['amount'] : 0;
+
+    setState(() {
+      this.ethBalance = '$ethBalanceInEth ETH';
+      this.cosmosBalance = '$cosmosBalance ATOM';
+    });
+  }
+
+  Future<void> sendEthTransaction(EthereumAddress from, EthereumAddress to, EthereumAmount amount) async {
+    final credentials = await rootBundle.loadString('assets/eth_private_key.txt');
+    final privateKey = EthPrivateKey.fromHex(credentials.trim());
+    final client = Web3Client('https://mainnet.infura.io/v3/your_infura_project_id', http.Client());
+    final transaction = Transaction(
+      from: from,
+      to: to,
+      value: amount.getInWei,
+      gasPrice: EtherAmount.inWei(BigInt.from(20000000000)),
+      maxGas: 21000,
+    );
+    final signedTransaction = await client.signTransaction(privateKey, transaction);
+    await client.sendRawTransaction(signedTransaction);
+  }
+
+  Future<void> sendCosmosTransaction(CosmosWallet wallet, CosmosAddress recipient, double amount) async {
+    final mnemonic = await rootBundle.loadString('assets/cosmos_mnemonic.txt');
+    final wallet = Wallet.derive(mnemonic);
+    final cosmos = Cosmos(baseUrl: 'https://lcd.terra.dev', chainId: 'columbus-5');
+    final result = await cosmos.sendCoins(
+      wallet,
+      [StdCoin(amount: amount.toStringAsFixed(6), denom: 'uatom')],
+      recipient,
+    );
+    print('Transaction Hash: ${result.txhash}');
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: Text('Blockchain Balances'),
+      ),
+      body: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: <Widget>[
+            Text(
+              'Ethereum Balance:',
+            ),
+            Text(
+              ethBalance,
+              style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+            ),
+            SizedBox(height: 20),
+            Text(
+              'Cosmos Balance:',
+            ),
+            Text(
+              cosmosBalance,
+              style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
